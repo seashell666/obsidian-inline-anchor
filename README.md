@@ -1,2 +1,64 @@
-# obsidian-inline-anchor
-Obsidian plugin: inline anchor links that jump to exact word positions in notes, with hidden markers and flash highlight on jump.
+# 一行多锚点 (Inline Multi Anchor)
+
+Obsidian 插件：在一行文字里放多个行内锚点，阅读视图完全隐藏标记，点击链接精确跳到指定词语位置并闪烁高亮。
+
+## 解决什么问题
+
+Obsidian 原生块锚点 `^id` 有两个硬伤：
+1. 只能放在段落末尾，不能行内
+2. 一个段落只能挂一个锚点，一段多锚点时全部冲突
+
+本插件允许你在一个段落里放任意多个锚点，每个锚点精确到某个词。
+
+## 用法
+
+### 1. 在正文里标记锚点
+
+在你想跳转的词语后面紧跟 `#` 加锚点 ID：
+
+```
+你已经中了我的独门毒蛊#gu-du-001，没有我的对应解蛊#gu-jie-001，七天之后，必定化为脓血而死。
+```
+
+- 锚点 ID 格式：`#` 开头，后面跟自定义 ID（建议用 `gu-拼音缩写-三位数字` 便于管理）
+- 阅读视图里 `#gu-du-001` 完全隐藏，你看到的是干净的小说原文
+- 编辑视图里能看到标记，方便批量修改
+
+### 2. 在其他笔记里链接到这个位置
+
+```
+[[0016-尽收囊中#gu-du-001|0016 尽收囊中 · 毒蛊第4次]]
+[[0016-尽收囊中#gu-jie-001|0016 尽收囊中 · 解蛊第2次]]
+```
+
+点击链接后：
+- 自动打开 0016 章
+- 滚动到"毒蛊"或"解蛊"那个词
+- 目标词黄色高亮闪烁 2 秒后恢复
+
+## 适用场景
+
+- 小说解构：为每只蛊虫、每个人物、每个地点建档案，档案里列所有出场位置，点击直达
+- 学术笔记：一段里引用多个文献，精确跳到引用位置
+- 任何需要"一行多锚点"的场景
+
+## 技术原理
+
+- `registerMarkdownPostProcessor`：阅读视图渲染时，把 `#id` 文本节点替换成隐藏的空 span（带 id）
+- `layout-change` 事件：链接跳转后检测 URL hash，找到对应 id 的元素 scrollIntoView 并加 CSS 闪烁动画
+- CSS：`.inline-anchor-target { display: none }` 隐藏锚点标记，`.inline-anchor-flash` 控制高亮闪烁
+
+## 安装
+
+1. 把 `main.js`、`manifest.json`、`styles.css` 放到 `.obsidian/plugins/inline-multi-anchor/`
+2. 重启 Obsidian
+3. 设置 → 第三方插件 → 启用"一行多锚点"
+
+## 开发
+
+```bash
+npm install
+npm run build
+```
+
+编译产物 `main.js` 直接复制到插件目录即可。
