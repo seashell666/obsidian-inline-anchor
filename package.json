@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-inline-anchor",
+  "version": "0.1.0",
+  "description": "Inline anchor links for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "keywords": ["obsidian", "plugin", "anchor"],
+  "author": "seashell666",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "obsidian": "^1.5.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}

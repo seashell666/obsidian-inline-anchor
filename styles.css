@@ -1,0 +1,11 @@
+/* 行内锚点目标：空 span，不占空间 */
+.inline-anchor-target {
+  display: none;
+}
+
+/* 跳转后高亮闪烁：作用在锚点前的蛊虫词上 */
+.inline-anchor-flash {
+  background-color: #fff3a0 !important;
+  border-radius: 2px;
+  transition: background-color 0.3s;
+}
