@@ -1,7 +1,7 @@
 {
   "id": "inline-multi-anchor",
   "name": "一行多锚点",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.0.0",
   "description": "一行内多个锚点：标记在阅读视图完全隐藏，点击链接精确跳到指定词并闪烁高亮。",
   "author": "seashell666",

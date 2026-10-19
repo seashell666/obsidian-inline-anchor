@@ -1,117 +1,211 @@
-import { Plugin, MarkdownPostProcessorContext, MarkdownView } from 'obsidian';
+import { Plugin, MarkdownView, TFile, MarkdownPostProcessorContext, HoverPopover, MarkdownRenderer, Component, HoverParent } from 'obsidian';
 
-// 匹配 #gu-xxx-NNN 格式的行内锚点标记
-const ANCHOR_RE = /#(gu-[a-z]+-\d{3})/g;
+// 锚点 id：拼音下划线 + 三位编号，如 yue_guang_gu_008、du_gu_001、liu_ying_cun_sheng_gu_001
+const ANCHOR_ID_RE = /^[a-z]+(?:_[a-z]+)*_\d{3}$/;
+// 正文标记：{id|词}，如 {yue_guang_gu_008|月光蛊}
+const ANCHOR_MARKER_RE = /\{([a-z]+(?:_[a-z]+)*_\d{3})\|([^}]+)\}/g;
+function markerOf(id: string) { return `{${id}|`; }
 
 export default class InlineAnchorPlugin extends Plugin {
   async onload() {
-    // 1. 阅读视图渲染：把 #gu-xxx-NNN 标记隐藏，给前面的词包 span
+    // 1. 阅读视图：{id|词} → 隐形的带 id 的词 span
     this.registerMarkdownPostProcessor((el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
-      this.processInlineAnchors(el);
+      this.processAnchors(el);
     });
-
-    // 2. 链接跳转后：监听布局变化，找到目标锚点并滚动+高亮
-    this.registerEvent(
-      this.app.workspace.on('layout-change', () => {
-        this.handleJump();
-      })
-    );
-
-    console.log('Inline Anchor plugin loaded');
+    // 2. 点击链接：精确跳到词、瞬间到顶部、高亮
+    this.registerLinkNavigation();
+    // 3. 悬停预览：显示锚点所在段落，只高亮当前词
+    this.registerHoverPreview();
+    console.log('一行多锚点 loaded');
   }
 
-  processInlineAnchors(el: HTMLElement) {
-    // 遍历所有文本节点，找 #gu-xxx-NNN
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-    const textNodes: Text[] = [];
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      textNodes.push(node as Text);
-    }
+  // ===== 渲染层 =====
+  processAnchors(el: HTMLElement) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let n: Node | null;
+    while ((n = walker.nextNode())) nodes.push(n as Text);
 
-    for (const textNode of textNodes) {
-      const text = textNode.textContent || '';
-      if (!ANCHOR_RE.test(text)) continue;
-      ANCHOR_RE.lastIndex = 0;
+    for (const node of nodes) {
+      const text = node.textContent || '';
+      if (!text.includes('{') || !text.includes('|')) continue;
+      ANCHOR_MARKER_RE.lastIndex = 0;
+      if (!ANCHOR_MARKER_RE.test(text)) continue;
+      ANCHOR_MARKER_RE.lastIndex = 0;
 
-      // 把这段文本拆成：前面的文字 + #id 标记 + 后面的文字
-      const parts: Array<{ type: 'text' | 'anchor'; content: string }> = [];
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = ANCHOR_RE.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
-        }
-        parts.push({ type: 'anchor', content: match[1] }); // 不包含 #
-        lastIndex = match.index + match[0].length;
-      }
-      if (lastIndex < text.length) {
-        parts.push({ type: 'text', content: text.slice(lastIndex) });
-      }
-
-      // 替换原文本节点
-      const parent = textNode.parentNode;
+      const parent = node.parentNode;
       if (!parent) continue;
-      const fragment = document.createDocumentFragment();
-      let pendingText = '';
-      for (const part of parts) {
-        if (part.type === 'text') {
-          pendingText += part.content;
-        } else {
-          // 遇到锚点：先把累积的普通文本作为一个 span（不带 id），然后锚点本身隐藏
-          if (pendingText) {
-            const span = document.createElement('span');
-            span.textContent = pendingText;
-            fragment.appendChild(span);
-            pendingText = '';
-          }
-          // 创建锚点 span：带 id，用来跳转
-          const anchorSpan = document.createElement('span');
-          anchorSpan.id = part.content; // gu-du-001
-          anchorSpan.className = 'inline-anchor-target';
-          anchorSpan.textContent = ''; // 不显示任何文字
-          // 注意：锚点 span 本身是空的，id 在这里
-          // 但我们希望"毒蛊"两个字被高亮，所以把锚点 span 插在"毒蛊"后面
-          // 前面的普通文本 span 会包含"毒蛊"
-          fragment.appendChild(anchorSpan);
-        }
-      }
-      if (pendingText) {
+
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = ANCHOR_MARKER_RE.exec(text)) !== null) {
+        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
         const span = document.createElement('span');
-        span.textContent = pendingText;
-        fragment.appendChild(span);
+        span.id = m[1];
+        span.className = 'anchor-word';
+        span.textContent = m[2];
+        frag.appendChild(span);
+        last = m.index + m[0].length;
       }
-      parent.replaceChild(fragment, textNode);
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      parent.replaceChild(frag, node);
     }
   }
 
-  handleJump() {
-    // 从 URL 或 Obsidian 内部状态拿 hash
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view) return;
+  // ===== 源文件里定位标记所在行（0-based）=====
+  findLineOfAnchor(content: string, id: string): number | null {
+    const marker = markerOf(id);
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(marker)) return i;
+    }
+    return null;
+  }
 
-    // Obsidian 打开文件带 #hash 时，hash 会在什么地方？
-    // 我们用一个简单方式：检查当前 active leaf 的 history
-    // 更可靠的方式：在链接点击时拦截
+  // ===== 点击跳转 =====
+  registerLinkNavigation() {
+    const { workspace } = this.app;
+    const original = workspace.openLinkText.bind(workspace);
 
-    // 暂时用 setTimeout 等渲染完
-    setTimeout(() => {
-      // 找所有 inline-anchor-target，看哪个 id 匹配
-      // 我们怎么知道要跳哪个？Obsidian 打开链接时会把 hash 加到 URL
-      const hash = window.location.hash;
-      if (!hash || !hash.startsWith('#gu-')) return;
-      const targetId = hash.slice(1); // 去掉 #
-      const el = document.getElementById(targetId);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // 高亮前面的蛊虫词（el 前面的兄弟节点）
-        const prev = el.previousSibling;
-        if (prev && prev.nodeType === Node.TEXT_NODE || (prev && prev instanceof HTMLSpanElement)) {
-          const target = prev as HTMLElement;
-          target.classList.add('inline-anchor-flash');
-          setTimeout(() => target.classList.remove('inline-anchor-flash'), 2000);
+    workspace.openLinkText = async (
+      linktext: string,
+      sourcePath: string,
+      newLeaf?: boolean,
+      openViewState?: unknown
+    ) => {
+      const hashIdx = linktext.indexOf('#');
+      if (hashIdx === -1) return original(linktext, sourcePath, newLeaf, openViewState);
+      const filePart = linktext.slice(0, hashIdx);
+      const fragment = linktext.slice(hashIdx + 1);
+
+      if (!ANCHOR_ID_RE.test(fragment)) return original(linktext, sourcePath, newLeaf, openViewState);
+
+      const file = this.app.metadataCache.getFirstLinkpathDest(filePart, sourcePath);
+      if (!(file instanceof TFile)) return original(linktext, sourcePath, newLeaf, openViewState);
+
+      const activeMd = this.app.workspace.getActiveViewOfType(MarkdownView);
+      // @ts-ignore
+      const leaf = newLeaf
+        ? this.app.workspace.getLeaf(true)
+        : activeMd?.leaf ?? this.app.workspace.getMostRecentLeaf();
+      if (!leaf) return original(linktext, sourcePath, newLeaf, openViewState);
+
+      const content = await this.app.vault.cachedRead(file);
+      const line = this.findLineOfAnchor(content, fragment);
+
+      // 不带 hash 打开（避免原生“未找到”）
+      await leaf.openFile(file);
+      const mdView = leaf.view as MarkdownView;
+
+      // 用 Obsidian 原生 applyScroll 瞬间定位到行（同时触发懒渲染，解决后面锚点）
+      // @ts-ignore
+      const renderer = mdView.previewMode?.renderer;
+      if (line !== null) {
+        if (renderer?.applyScrollDelayed) {
+          renderer.applyScrollDelayed(line, { highlight: false });
+        } else if (renderer?.applyScroll) {
+          renderer.applyScroll(line);
+          // @ts-ignore
+        } else if (mdView.previewMode?.applyScroll) {
+          // @ts-ignore
+          mdView.previewMode.applyScroll(line);
         }
       }
-    }, 100);
+
+      // 等两帧让 DOM 渲染
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+
+      const previewRoot = (mdView.containerEl.querySelector('.markdown-preview-view') as HTMLElement) || mdView.contentEl;
+      const anchor = await this.waitForElementById(fragment, 2000, previewRoot);
+
+      if (anchor) {
+        const rect = anchor.getBoundingClientRect();
+        if (rect.top < 0 || rect.top > window.innerHeight) {
+          anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }
+        anchor.classList.add('inline-anchor-flash');
+        setTimeout(() => anchor.classList.remove('inline-anchor-flash'), 4200);
+      }
+    };
+
+    this.register(() => { workspace.openLinkText = original; });
+  }
+
+  // ===== 悬停预览 =====
+  registerHoverPreview() {
+    try {
+      // @ts-ignore
+      const internal = this.app.internalPlugins;
+      // @ts-ignore
+      const plugin = internal?.getPluginById?.call(internal, 'page-preview') ?? internal?.plugins?.['page-preview'];
+      const instance = plugin?.instance;
+      if (!instance || typeof instance.onLinkHover !== 'function') return;
+
+      const original = instance.onLinkHover.bind(instance);
+      const wrapped = async (hoverParent: HoverParent, targetEl: HTMLElement, linktext: string, sourcePath: string, ...rest: unknown[]) => {
+        const hashIdx = linktext.indexOf('#');
+        if (hashIdx === -1) return original(hoverParent, targetEl, linktext, sourcePath, ...rest);
+        const fragment = linktext.slice(hashIdx + 1);
+        if (!ANCHOR_ID_RE.test(fragment)) return original(hoverParent, targetEl, linktext, sourcePath, ...rest);
+
+        const filePart = linktext.slice(0, hashIdx);
+        const file = this.app.metadataCache.getFirstLinkpathDest(filePart, sourcePath);
+        if (!(file instanceof TFile)) return original(hoverParent, targetEl, linktext, sourcePath, ...rest);
+
+        const content = await this.app.vault.cachedRead(file);
+        const line = this.findLineOfAnchor(content, fragment);
+        if (line === null) return original(hoverParent, targetEl, linktext, sourcePath, ...rest);
+
+        const lines = content.split('\n');
+        let para = lines[line] || '';
+        // 当前锚点高亮：{id|词} → ==词==
+        const escapedId = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const currentMarker = new RegExp(`\\{${escapedId}\\|([^}]+)\\}`, 'g');
+        para = para.replace(currentMarker, '==$1==');
+        // 同段其他锚点只保留词、不高亮：{otherId|词} → 词
+        para = para.replace(ANCHOR_MARKER_RE, '$2');
+
+        const popover = new HoverPopover(hoverParent, targetEl);
+        const embed = popover.hoverEl.createDiv({ cls: 'markdown-embed is-loaded inline-anchor-popover' });
+        const preview = embed.createDiv({ cls: 'markdown-preview-view markdown-rendered' });
+        await MarkdownRenderer.render(this.app, para, preview, file.path, new Component());
+
+        embed.addEventListener('click', () => {
+          popover.hide();
+          this.app.workspace.openLinkText(`${file.basename}#${fragment}`, sourcePath);
+        });
+      };
+      instance.onLinkHover = wrapped;
+      this.register(() => {
+        if (instance.onLinkHover === wrapped) instance.onLinkHover = original;
+      });
+    } catch (e) {
+      console.log('一行多锚点：预览拦截失败', e);
+    }
+  }
+
+  // ===== 等待元素出现（应对懒渲染）=====
+  waitForElementById(id: string, timeoutMs: number, root: HTMLElement): Promise<HTMLElement | null> {
+    const find = () => root.querySelector(`#${CSS.escape(id)}`) as HTMLElement | null;
+    const existing = find();
+    if (existing) return Promise.resolve(existing);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (el: HTMLElement | null) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(el);
+      };
+      const observer = new MutationObserver(() => {
+        const el = find();
+        if (el) finish(el);
+      });
+      observer.observe(root, { childList: true, subtree: true });
+      const timer = setTimeout(() => finish(find()), timeoutMs);
+    });
   }
 }

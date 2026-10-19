@@ -1,11 +1,37 @@
-/* 行内锚点目标：空 span，不占空间 */
-.inline-anchor-target {
-  display: none;
+/* 锚点词：正常显示 */
+.anchor-word {
+  background-color: transparent;
+  border-radius: 2px;
 }
 
-/* 跳转后高亮闪烁：作用在锚点前的蛊虫词上 */
+/* 跳转后高亮：先亮后慢慢淡出，持续约 4 秒 */
 .inline-anchor-flash {
-  background-color: #fff3a0 !important;
-  border-radius: 2px;
-  transition: background-color 0.3s;
+  animation: anchor-flash 4.2s ease-out forwards;
+}
+@keyframes anchor-flash {
+  0% {
+    background-color: #ffd54a;
+    box-shadow: 0 0 0 2px rgba(255, 213, 74, 0.5);
+  }
+  15% {
+    background-color: #ffd54a;
+    box-shadow: 0 0 0 2px rgba(255, 213, 74, 0.5);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 rgba(255, 213, 74, 0);
+  }
+}
+
+/* hover 预览弹窗 */
+.inline-anchor-popover {
+  max-height: 300px;
+  max-width: 500px;
+  overflow: auto;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.inline-anchor-popover .markdown-preview-view {
+  padding: 0;
+  font-size: 0.9em;
 }
